@@ -163,11 +163,3 @@ kernel_sf = HeatKernelSourceFree(diffusivity=0.1, domain_bounds=(0.0, 1.0))
 gp_sf = PDEGP(kernel_sf, noise_variance=0.01**2)
 gp_sf.fit(X_train, y_train)
 ```
-
-### Notes reflected in code
-
-- Experiments set `np.random.seed(42)` for reproducibility.
-- Heat kernels expect last coordinate to be time; time must be non-negative.
-- Experiments save figures into `experiments/outputs/` and close figures with `plt.close()`.
-
-- Edits: Added a concise, code-based README with install, run commands, API overview, and minimal examples strictly derived from `experiments/*.py` and `src/gp_pde_regression/*`.
