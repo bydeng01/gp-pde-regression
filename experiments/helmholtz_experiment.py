@@ -11,27 +11,12 @@ if SRC_DIR not in sys.path:
 
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.special import hankel1
-from gp_pde_regression.kernels import HelmholtzKernel2D, SquaredExponentialKernel
+from gp_pde_regression.kernels import (HelmholtzKernel2D, SquaredExponentialKernel,
+                                        HelmholtzFundamentalSolution2D)
 from gp_pde_regression.gp_pde import PDEGP
-from gp_pde_regression.utils import (generate_grid_2d, compute_metrics, 
+from gp_pde_regression.utils import (generate_grid_2d, compute_metrics,
                    plot_helmholtz_convergence, plot_likelihood_profile,
                    plot_source_reconstruction)
-
-
-class HelmholtzFundamentalSolution2D:
-    """Fundamental solution for 2D Helmholtz equation"""
-    
-    def __init__(self, wavenumber):
-        self.wavenumber = wavenumber
-    
-    def __call__(self, x, x_source):
-        """G(x, ξ) = (i/4) H₀⁽¹⁾(k₀|x-ξ|)"""
-        r = np.linalg.norm(x - x_source)
-        if r < 1e-10:
-            return 0.0
-        G = 0.25j * hankel1(0, self.wavenumber * r)
-        return np.real(G)
 
 
 def solve_helmholtz_2d(X, k0, X_sources, q_sources, domain_bounds=(-1.5, 1.5)):
@@ -52,17 +37,24 @@ def solve_helmholtz_2d(X, k0, X_sources, q_sources, domain_bounds=(-1.5, 1.5)):
 
 
 def run_helmholtz_experiment(k0_true=9.16, noise_level=0.01,
-                            n_sensors_list=[7, 13, 20],
+                            n_sensors_list=[20, 40, 80],
                             domain_bounds=((-1.5, 1.5), (-1.5, 1.5))):
     """
     Run Helmholtz equation experiment with source reconstruction.
-    
+
+    The synthetic field here is a pure superposition of the two point sources,
+    without the boundary-driven (homogeneous) component of the paper's cavity
+    setup. With that simplification the wavenumber is only identifiable from the
+    marginal likelihood once there are enough measurements, so the sensor counts
+    are larger than in the paper; around 80 sensors the recovered k0 lands near
+    the paper's k0_ML ~ 9.19.
+
     Args:
         k0_true: true wavenumber
         noise_level: measurement noise std
         n_sensors_list: list of sensor counts for convergence study
         domain_bounds: ((xmin,xmax), (ymin,ymax))
-        
+
     Returns:
         results: dict with all results
     """
@@ -107,28 +99,27 @@ def run_helmholtz_experiment(k0_true=9.16, noise_level=0.01,
         # 1. PDE-aware kernel with source reconstruction
         print("\n1. PDE-aware kernel with hyperparameter optimization...")
         
-        # Create kernel and GP
+        # Create kernel and GP, then fit once before optimizing
         kernel_pde = HelmholtzKernel2D(wavenumber=k0_true)
         G = HelmholtzFundamentalSolution2D(k0_true)
         gp_pde = PDEGP(kernel_pde, noise_variance=noise_level**2,
                        source_locations=X_sources, fundamental_solution=G)
-        
-        # Optimize wavenumber
+        gp_pde.fit(X_train, y_train)
+
+        # Optimize wavenumber. optimize_hyperparameters keeps the kernel and the
+        # fundamental solution in sync and refits at the optimum, so the GP is
+        # ready to query straight after.
         k0_bounds = [(k0_true - 2, k0_true + 2)]
         optimal_params = gp_pde.optimize_hyperparameters(
             param_names=['wavenumber'],
             bounds=k0_bounds,
-            n_restarts=3
+            n_restarts=3,
+            random_state=n_sensors
         )
-        
+
         k0_opt = optimal_params['wavenumber'] if optimal_params else k0_true
         print(f"   Optimized k₀: {k0_opt:.4f} (true: {k0_true:.4f})")
-        
-        # Update fundamental solution with optimized wavenumber
-        G_opt = HelmholtzFundamentalSolution2D(k0_opt)
-        gp_pde.fundamental_solution = G_opt
-        gp_pde.fit(X_train, y_train)
-        
+
         # Source reconstruction
         q_est = gp_pde.b_mean
         q_std = np.sqrt(np.diag(gp_pde.b_cov))
@@ -212,7 +203,7 @@ if __name__ == '__main__':
     results = run_helmholtz_experiment(
         k0_true=9.16,
         noise_level=0.01,
-        n_sensors_list=[7, 13, 20]
+        n_sensors_list=[20, 40, 80]
     )
     
     print("\n" + "="*60)
@@ -253,9 +244,10 @@ if __name__ == '__main__':
                source_locations=results['X_sources'], 
                fundamental_solution=G)
     
-    # Regenerate training data
-    X_train = np.random.uniform([-1.5, -1.5], [1.5, 1.5], size=(20, 2))
-    y_train = solve_helmholtz_2d(X_train, results['k0_true'], 
+    # Regenerate training data (match the largest sensor count for a clean field)
+    n_viz = results['n_sensors_list'][-1]
+    X_train = np.random.uniform([-1.5, -1.5], [1.5, 1.5], size=(n_viz, 2))
+    y_train = solve_helmholtz_2d(X_train, results['k0_true'],
                                  results['X_sources'], results['q_true'])
     y_train += np.random.normal(0, 0.01, size=y_train.shape)
     gp.fit(X_train, y_train)

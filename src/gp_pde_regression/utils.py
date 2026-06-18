@@ -28,41 +28,33 @@ def generate_grid_2d(bounds, n_points):
 
 def generate_boundary_points(n_points, domain_size=1.0):
     """
-    Generate points on boundary of square domain.
-    
+    Generate evenly spaced points on the boundary of a square domain.
+
     Args:
         n_points: number of boundary points
         domain_size: half-width of square domain
-        
+
     Returns:
         X_boundary: (n_points, 2) array
     """
-    # Distribute points on 4 edges
-    n_per_edge = n_points // 4
-    
-    points = []
-    
-    # Bottom edge
-    x = np.linspace(-domain_size, domain_size, n_per_edge)
-    y = -domain_size * np.ones(n_per_edge)
-    points.append(np.column_stack([x, y]))
-    
-    # Right edge
-    x = domain_size * np.ones(n_per_edge)
-    y = np.linspace(-domain_size, domain_size, n_per_edge)
-    points.append(np.column_stack([x, y]))
-    
-    # Top edge
-    x = np.linspace(domain_size, -domain_size, n_per_edge)
-    y = domain_size * np.ones(n_per_edge)
-    points.append(np.column_stack([x, y]))
-    
-    # Left edge
-    x = -domain_size * np.ones(n_points - 3*n_per_edge)
-    y = np.linspace(domain_size, -domain_size, n_points - 3*n_per_edge)
-    points.append(np.column_stack([x, y]))
-    
-    return np.vstack(points)
+    s = domain_size
+
+    # Spread the points across the four edges, giving any remainder to the
+    # first edges. endpoint=False keeps the shared corners from being counted
+    # twice, so all returned points are distinct.
+    counts = [n_points // 4] * 4
+    for i in range(n_points - sum(counts)):
+        counts[i] += 1
+    bottom, right, top, left = counts
+
+    edges = [
+        np.column_stack([np.linspace(-s, s, bottom, endpoint=False), -s * np.ones(bottom)]),
+        np.column_stack([s * np.ones(right), np.linspace(-s, s, right, endpoint=False)]),
+        np.column_stack([np.linspace(s, -s, top, endpoint=False), s * np.ones(top)]),
+        np.column_stack([-s * np.ones(left), np.linspace(s, -s, left, endpoint=False)]),
+    ]
+
+    return np.vstack(edges)
 
 
 def compute_metrics(y_true, y_pred, y_std=None):

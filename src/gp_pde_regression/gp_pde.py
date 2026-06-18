@@ -124,6 +124,9 @@ class PDEGP:
             std: (n_test,) predicted std (if return_std=True)
             cov: (n_test, n_test) predicted covariance (if return_cov=True)
         """
+        if self.X_train is None:
+            raise RuntimeError("Call fit() before predict().")
+
         K_star = self.kernel(self.X_train, X_test)
         
         if self.source_locations is not None and self.H is not None:
@@ -205,16 +208,19 @@ class PDEGP:
             
             complexity = np.sum(np.log(np.diag(self.L)))
             
-            # Add source term
+            # Add source term. With a vague prior on the m source coefficients
+            # the marginal likelihood picks up a 0.5*log|H K_y^-1 H^T| Occam
+            # factor and the Gaussian constant runs over n - m dimensions.
+            m = self.H.shape[0]
             HKH = self.H @ cho_solve((self.L, True), self.H.T)
             HKH = np.asarray(0.5 * (HKH + HKH.T), dtype=np.float64)
             try:
                 L_HKH = cholesky(HKH, lower=True)
                 complexity += np.sum(np.log(np.diag(L_HKH)))
-            except:
-                complexity += 0.5 * np.log(np.linalg.det(HKH + 1e-8*np.eye(HKH.shape[0])))
-            
-            nll = data_fit + complexity + 0.5 * n * np.log(2 * np.pi)
+            except np.linalg.LinAlgError:
+                complexity += 0.5 * np.log(np.linalg.det(HKH + 1e-8*np.eye(m)))
+
+            nll = data_fit + complexity + 0.5 * (n - m) * np.log(2 * np.pi)
         else:
             # Standard GP likelihood
             temp = solve_triangular(self.L, self.y_train, lower=True)
@@ -224,51 +230,61 @@ class PDEGP:
         
         return nll
     
-    def optimize_hyperparameters(self, param_names, bounds, n_restarts=3):
+    def optimize_hyperparameters(self, param_names, bounds, n_restarts=3,
+                                 random_state=None):
         """
-        Optimize kernel hyperparameters by maximizing marginal likelihood.
-        
+        Optimize kernel hyperparameters by maximizing the marginal likelihood.
+
         Args:
             param_names: list of hyperparameter names to optimize
             bounds: list of (min, max) tuples for each parameter
             n_restarts: number of random restarts
-            
+            random_state: seed for the restart draws (for reproducibility)
+
         Returns:
-            optimized_params: dict of optimized parameters
+            optimized_params: dict of optimized parameters, or None if every
+            restart failed
         """
-        def objective(params):
-            # Update kernel hyperparameters
-            param_dict = {name: val for name, val in zip(param_names, params)}
+        if self.X_train is None:
+            raise RuntimeError("Call fit() before optimize_hyperparameters().")
+
+        rng = np.random.default_rng(random_state)
+
+        def apply_params(param_dict):
             self.kernel.update_hyperparams(**param_dict)
-            
-            # Refit GP
+            # Keep the fundamental solution in sync: a parameter such as the
+            # wavenumber also lives in the Green's function, so the source
+            # matrix H has to follow the kernel.
+            if self.fundamental_solution is not None:
+                for name, val in param_dict.items():
+                    if hasattr(self.fundamental_solution, name):
+                        setattr(self.fundamental_solution, name, val)
+
+        def objective(params):
+            apply_params(dict(zip(param_names, params)))
             self.fit(self.X_train, self.y_train)
-            
-            # Return negative log likelihood
-            return self.negative_log_likelihood()
-        
+            nll = self.negative_log_likelihood()
+            # A bad parameter region can make the kernel ill-conditioned; steer
+            # the optimizer away rather than letting NaNs poison the search.
+            return nll if np.isfinite(nll) else np.inf
+
         best_params = None
         best_nll = np.inf
-        
+
         for _ in range(n_restarts):
-            # Random initialization within bounds
-            x0 = [np.random.uniform(b[0], b[1]) for b in bounds]
-            
+            x0 = [rng.uniform(lo, hi) for lo, hi in bounds]
             try:
                 result = minimize(objective, x0=x0, method='L-BFGS-B', bounds=bounds)
-                
-                if result.fun < best_nll:
-                    best_nll = result.fun
-                    best_params = result.x
-            except:
+            except (np.linalg.LinAlgError, ValueError):
                 continue
-        
-        if best_params is not None:
-            # Update with best parameters
-            param_dict = {name: val for name, val in zip(param_names, best_params)}
-            self.kernel.update_hyperparams(**param_dict)
-            self.fit(self.X_train, self.y_train)
-            
-            return param_dict
-        else:
+            if np.isfinite(result.fun) and result.fun < best_nll:
+                best_nll = result.fun
+                best_params = result.x
+
+        if best_params is None:
             return None
+
+        param_dict = dict(zip(param_names, best_params))
+        apply_params(param_dict)
+        self.fit(self.X_train, self.y_train)
+        return param_dict

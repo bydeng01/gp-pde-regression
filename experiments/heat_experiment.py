@@ -18,17 +18,18 @@ from gp_pde_regression.utils import compute_metrics
 
 def heat_analytical_solution(x, t, D=0.1, L=1.0):
     """
-    Simple analytical solution for heat equation with initial condition.
-    Using separation of variables: u(x,t) = sum of modes
+    Heat equation on [0, L] with homogeneous Dirichlet boundaries, solved by
+    separation of variables. The coefficients are the Fourier sine series of the
+    constant initial condition u(x,0) = 1 (a unit "box"), so only odd modes
+    survive.
     """
     u = 0.0
     n_modes = 20
-    
+
     for n in range(1, n_modes + 1):
-        # Sine series
-        coeff = 2.0 / (n * np.pi) * (1 - (-1)**n)  # For u(x,0) = x
+        coeff = 2.0 / (n * np.pi) * (1 - (-1)**n)
         u += coeff * np.sin(n * np.pi * x / L) * np.exp(-D * (n * np.pi / L)**2 * t)
-    
+
     return u
 
 

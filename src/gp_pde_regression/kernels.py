@@ -4,7 +4,7 @@ Based on Albert (2019) - "Gaussian processes for data fulfilling linear differen
 """
 
 import numpy as np
-from scipy.special import hankel1, jv, erf
+from scipy.special import hankel1, j0, erf
 from abc import ABC, abstractmethod
 
 
@@ -174,32 +174,34 @@ class LaplaceCartesianKernel(PDEKernel):
 
 class HelmholtzKernel2D(PDEKernel):
     """
-    Stationary kernel for 2D Helmholtz equation based on Bessel/Hankel functions.
-    Simplified implementation - full version in Albert 2019 [11].
+    Stationary kernel for the homogeneous 2D Helmholtz equation, following the
+    Bessel construction of Albert (2019) [11]. Realizations satisfy
+    (Δ + k₀²)u = 0.
+
+    The kernel is J₀(k₀ r), the rotationally symmetric solution of the
+    homogeneous equation that stays finite at the origin. By Bochner's theorem
+    it is positive definite in 2D (it is the Fourier transform of a uniform
+    measure on the circle of radius k₀), so it gives a valid covariance. The
+    singular Hankel/Green's function is used only for source terms, not here.
     """
-    
+
     def __init__(self, wavenumber=1.0, regularization=1e-6):
         super().__init__(wavenumber=wavenumber, regularization=regularization)
-    
+
     def kernel_function(self, x, x_prime):
         """
-        Kernel based on Hankel function of first kind
-        k(r) ∝ H₀⁽¹⁾(k₀ r) for r = |x - x'|
+        k(r) = J₀(k₀ r) for r = |x - x'|.
         """
         k0 = self.hyperparams['wavenumber']
         reg = self.hyperparams['regularization']
-        
+
         r = np.linalg.norm(x - x_prime)
-        
-        if r < 1e-10:
-            # Regularization at singularity
-            return reg
-        
-        # Hankel function of first kind, order 0
-        kernel_value = 0.25j * hankel1(0, k0 * r)
-        
-        # Return real part (imaginary part vanishes for symmetric problems)
-        return np.real(kernel_value)
+
+        # J₀(0) = 1; reg is a small nugget on coincident points for strict PD.
+        if r < 1e-12:
+            return 1.0 + reg
+
+        return float(j0(k0 * r))
 
 
 class HelmholtzFundamentalSolution2D:

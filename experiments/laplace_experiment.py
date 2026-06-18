@@ -19,10 +19,26 @@ from gp_pde_regression.utils import (generate_grid_2d, generate_boundary_points,
 
 def laplace_reference_solution(x, y):
     """
-    Analytical solution from paper (Equation 31).
-    u(x,y) = 0.5 * e^y * cos(x) + 2x * cos(2y)
+    Reference field from the paper (Equation 31):
+        u(x,y) = 0.5 * e^y * cos(x) + 2x * cos(2y)
+
+    Reproduced verbatim. Note the second term is not harmonic
+    (Δ(2x cos 2y) = -8x cos 2y), so this field does not satisfy Laplace's
+    equation exactly. The PDE-aware kernel only spans harmonic functions, so it
+    fits the harmonic part and leaves a residual from 2x cos 2y - this is the
+    floor on the reconstruction error here. See laplace_reference_harmonic for a
+    purely harmonic field.
     """
     return 0.5 * np.exp(y) * np.cos(x) + 2*x * np.cos(2*y)
+
+
+def laplace_reference_harmonic(x, y):
+    """
+    A genuinely harmonic reference field (Δu = 0), useful for checking that the
+    PDE-aware kernel reconstructs admissible fields essentially exactly.
+        u(x,y) = 0.5 * e^y * cos(x) + e^x * cos(y)
+    """
+    return 0.5 * np.exp(y) * np.cos(x) + np.exp(x) * np.cos(y)
 
 
 def run_laplace_experiment(domain_size=1.0, n_train=8, noise_level=0.1,
